@@ -52,13 +52,15 @@ POPULAR_GENES = {
 
 INTERNAL_COUPLING_FACTOR = 0.50
 
-# --- BACKGROUND COLOR PALETTES (CUSTOM CSS) ---
+# --- BACKGROUND & CONTRASTING TEXT COLOR PALETTES ---
 THEME_CSS = {
-    "TMDAI Clinical (Default)": {
-        "bg_color": "#F8FAFC",
-        "sidebar_bg": "#EDF2F7",
-        "card_bg": "#FFFFFF",
+    "Light / Clinical": {
+        "bg_color": "#FFFFFF",
+        "sidebar_bg": "#F1F5F9",
+        "card_bg": "#F8FAFC",
         "text_color": "#0F172A",
+        "border_color": "#CBD5E1",
+        "plotly_template": "plotly_white",
         "chart_colors": ["#EF553B", "#FECB52", "#00CC96"]
     },
     "Emerald Bio": {
@@ -66,6 +68,8 @@ THEME_CSS = {
         "sidebar_bg": "#DCFCE7",
         "card_bg": "#FFFFFF",
         "text_color": "#14532D",
+        "border_color": "#86EFAC",
+        "plotly_template": "plotly_white",
         "chart_colors": ["#D62728", "#FF7F0E", "#2CA02C"]
     },
     "Cyberpunk Dark": {
@@ -73,14 +77,18 @@ THEME_CSS = {
         "sidebar_bg": "#1E293B",
         "card_bg": "#1E293B",
         "text_color": "#F8FAFC",
+        "border_color": "#334155",
+        "plotly_template": "plotly_dark",
         "chart_colors": ["#FF0055", "#FFE600", "#00FF66"]
     },
     "Monochrome Minimal": {
-        "bg_color": "#F5F5F5",
-        "sidebar_bg": "#E5E5E5",
-        "card_bg": "#FFFFFF",
-        "text_color": "#111111",
-        "chart_colors": ["#111111", "#777777", "#CCCCCC"]
+        "bg_color": "#18181B",
+        "sidebar_bg": "#27272A",
+        "card_bg": "#27272A",
+        "text_color": "#FAFAFA",
+        "border_color": "#3F3F46",
+        "plotly_template": "plotly_dark",
+        "chart_colors": ["#EF4444", "#F59E0B", "#10B981"]
     }
 }
 
@@ -162,25 +170,41 @@ st.sidebar.title("⚙️ Dashboard Controls")
 
 # Theme Dropdown - App Background Switcher
 st.sidebar.subheader("🎨 App Background Theme")
-selected_theme_name = st.sidebar.selectbox("Choose Background Palette", options=list(THEME_CSS.keys()))
+selected_theme_name = st.sidebar.selectbox("Choose Theme", options=list(THEME_CSS.keys()))
 active_theme = THEME_CSS[selected_theme_name]
 
-# Inject Custom CSS to alter Background Palette
+# Inject Dynamic CSS to adapt background and text colors across elements
 st.markdown(
     f"""
     <style>
+    /* Global Background & Text */
     .stApp {{
-        background-color: {active_theme['bg_color']};
-        color: {active_theme['text_color']};
+        background-color: {active_theme['bg_color']} !important;
+        color: {active_theme['text_color']} !important;
     }}
+    
+    /* Sidebar Styling */
     [data-testid="stSidebar"] {{
-        background-color: {active_theme['sidebar_bg']};
+        background-color: {active_theme['sidebar_bg']} !important;
     }}
+    [data-testid="stSidebar"] * {{
+        color: {active_theme['text_color']} !important;
+    }}
+    
+    /* Metric KPI Cards */
     div[data-testid="stMetric"] {{
-        background-color: {active_theme['card_bg']};
-        padding: 12px;
+        background-color: {active_theme['card_bg']} !important;
+        padding: 14px;
         border-radius: 8px;
-        border: 1px solid #E2E8F0;
+        border: 1px solid {active_theme['border_color']} !important;
+    }}
+    div[data-testid="stMetric"] * {{
+        color: {active_theme['text_color']} !important;
+    }}
+
+    /* Global Headings & Paragraphs */
+    h1, h2, h3, h4, h5, h6, p, label, span {{
+        color: {active_theme['text_color']} !important;
     }}
     </style>
     """,
@@ -275,7 +299,7 @@ with main_left:
             color_discrete_map=color_discrete_map,
             text="Risk Index (V_tissue)",
             range_y=[0, 1.0],
-            template="plotly_white"
+            template=active_theme["plotly_template"]
         )
     elif chart_style == "Pie Chart":
         fig = px.pie(
@@ -285,7 +309,7 @@ with main_left:
             color="Verdict",
             color_discrete_map=color_discrete_map,
             hole=0.4,
-            template="plotly_white"
+            template=active_theme["plotly_template"]
         )
     else:  # Line Chart
         fig = px.line(
@@ -294,12 +318,16 @@ with main_left:
             y="Risk Index (V_tissue)",
             markers=True,
             text="Risk Index (V_tissue)",
-            template="plotly_white"
+            template=active_theme["plotly_template"]
         )
         fig.update_traces(line_color="#636EFA", line_width=3, marker_size=8)
         fig.update_yaxes(range=[0, 1.0])
 
-    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10))
+    fig.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=10, r=10, t=20, b=10)
+    )
     st.plotly_chart(fig, use_container_width=True)
 
 with main_right:
