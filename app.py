@@ -11,61 +11,80 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- BASELINE TISSUE EXPRESSION ATLAS (Tabula Sapiens TPM) ---
+# --- BASELINE TISSUE EXPRESSION & MANE REFERENCE ATLAS ---
 POPULAR_GENES = {
     "MYBPC3": {
         "description": "Hypertrophic Cardiomyopathy",
+        "refseq_transcript": "NM_000256.3 (MANE Select)",
+        "hgvs_default": "NC_000011.10:g.47352922G>A",
+        "amino_acid_ref": "p.Arg502Gln",
         "tissues": {"Cardiac Muscle": 480, "Skeletal Muscle": 110, "Brain Cortex": 15, "Liver": 5, "Kidney": 10}
     },
     "TP53": {
         "description": "Li-Fraumeni Syndrome / Tumor Suppressor",
+        "refseq_transcript": "NM_000546.6 (MANE Select)",
+        "hgvs_default": "NC_000017.11:g.7674220G>A",
+        "amino_acid_ref": "p.Arg248Gln",
         "tissues": {"Skin": 450, "Breast": 380, "Brain Cortex": 310, "Liver": 290, "Cardiac Muscle": 150}
     },
     "BRCA1": {
         "description": "Hereditary Breast & Ovarian Cancer",
+        "refseq_transcript": "NM_007294.4 (MANE Select)",
+        "hgvs_default": "NC_000017.11:g.43044295C>T",
+        "amino_acid_ref": "p.Cys61Gly",
         "tissues": {"Breast": 420, "Ovary": 390, "Blood": 210, "Cardiac Muscle": 25, "Liver": 15}
     },
     "CFTR": {
         "description": "Cystic Fibrosis",
+        "refseq_transcript": "NM_000492.4 (MANE Select)",
+        "hgvs_default": "NC_000007.14:g.117559590A>G",
+        "amino_acid_ref": "p.Phe508del",
         "tissues": {"Lung": 410, "Pancreas": 380, "Liver": 120, "Kidney": 90, "Cardiac Muscle": 10}
     },
     "LDLR": {
         "description": "Familial Hypercholesterolemia",
+        "refseq_transcript": "NM_000527.5 (MANE Select)",
+        "hgvs_default": "NC_000019.10:g.11100236G>A",
+        "amino_acid_ref": "p.Cys681X",
         "tissues": {"Liver": 520, "Adrenal Gland": 310, "Kidney": 180, "Skin": 110, "Cardiac Muscle": 45}
     }
 }
 
 INTERNAL_COUPLING_FACTOR = 0.50
 
-# --- COLOR PALETTES ---
-THEME_PALETTES = {
+# --- BACKGROUND COLOR PALETTES (CUSTOM CSS) ---
+THEME_CSS = {
     "TMDAI Clinical (Default)": {
-        "Pathogenic": "#EF553B",
-        "VUS (Uncertain)": "#FECB52",
-        "Benign / Safe": "#00CC96",
-        "template": "plotly_white"
+        "bg_color": "#F8FAFC",
+        "sidebar_bg": "#EDF2F7",
+        "card_bg": "#FFFFFF",
+        "text_color": "#0F172A",
+        "chart_colors": ["#EF553B", "#FECB52", "#00CC96"]
     },
     "Emerald Bio": {
-        "Pathogenic": "#D62728",
-        "VUS (Uncertain)": "#FF7F0E",
-        "Benign / Safe": "#2CA02C",
-        "template": "ggplot2"
+        "bg_color": "#F0FDF4",
+        "sidebar_bg": "#DCFCE7",
+        "card_bg": "#FFFFFF",
+        "text_color": "#14532D",
+        "chart_colors": ["#D62728", "#FF7F0E", "#2CA02C"]
     },
     "Cyberpunk Dark": {
-        "Pathogenic": "#FF0055",
-        "VUS (Uncertain)": "#FFE600",
-        "Benign / Safe": "#00FF66",
-        "template": "plotly_dark"
+        "bg_color": "#0F172A",
+        "sidebar_bg": "#1E293B",
+        "card_bg": "#1E293B",
+        "text_color": "#F8FAFC",
+        "chart_colors": ["#FF0055", "#FFE600", "#00FF66"]
     },
     "Monochrome Minimal": {
-        "Pathogenic": "#111111",
-        "VUS (Uncertain)": "#777777",
-        "Benign / Safe": "#CCCCCC",
-        "template": "simple_white"
+        "bg_color": "#F5F5F5",
+        "sidebar_bg": "#E5E5E5",
+        "card_bg": "#FFFFFF",
+        "text_color": "#111111",
+        "chart_colors": ["#111111", "#777777", "#CCCCCC"]
     }
 }
 
-# --- THRESHOLD FUNCTIONS ---
+# --- THRESHOLD HELPER FUNCTIONS ---
 
 def get_alphamissense_verdict(score):
     if score < 0.34:
@@ -108,7 +127,7 @@ def run_tmdai_pipeline(hgvs_variant, custom_gene_name, s_am, s_splice, custom_tp
     annot = fetch_ensembl_annotation(hgvs_variant)
     active_gene = custom_gene_name if custom_gene_name.strip() else annot['gene']
     
-    # Joint coupling logic
+    # Internal joint interaction formula
     base_max = max(s_am, s_splice)
     interaction_term = INTERNAL_COUPLING_FACTOR * (s_am * s_splice) * (1.0 - base_max)
     s_raw = min(1.0, base_max + interaction_term)
@@ -141,24 +160,55 @@ def run_tmdai_pipeline(hgvs_variant, custom_gene_name, s_am, s_splice, custom_tp
 
 st.sidebar.title("⚙️ Dashboard Controls")
 
-# Theme Dropdown
-st.sidebar.subheader("🎨 Appearance Settings")
-selected_palette_name = st.sidebar.selectbox("Color Palette Theme", options=list(THEME_PALETTES.keys()))
-active_theme = THEME_PALETTES[selected_palette_name]
+# Theme Dropdown - App Background Switcher
+st.sidebar.subheader("🎨 App Background Theme")
+selected_theme_name = st.sidebar.selectbox("Choose Background Palette", options=list(THEME_CSS.keys()))
+active_theme = THEME_CSS[selected_theme_name]
+
+# Inject Custom CSS to alter Background Palette
+st.markdown(
+    f"""
+    <style>
+    .stApp {{
+        background-color: {active_theme['bg_color']};
+        color: {active_theme['text_color']};
+    }}
+    [data-testid="stSidebar"] {{
+        background-color: {active_theme['sidebar_bg']};
+    }}
+    div[data-testid="stMetric"] {{
+        background-color: {active_theme['card_bg']};
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #E2E8F0;
+    }}
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 # Gene Selection
-st.sidebar.subheader("🧬 Gene & Variant Selection")
+st.sidebar.subheader("🧬 Target Gene Selection")
 gene_options = [f"{gene} - {info['description']}" for gene, info in POPULAR_GENES.items()] + ["+ Custom Gene"]
 selected_gene_label = st.sidebar.selectbox("Select Target Gene", options=gene_options)
 
 if selected_gene_label == "+ Custom Gene":
     active_gene_name = st.sidebar.text_input("Custom Gene Symbol", value="EGFR").upper()
+    ref_transcript = "NM_005228.5 (MANE Select)"
+    ref_hgvs = "NC_000007.14:g.55181378C>T"
+    ref_aa = "p.Leu858Arg"
     initial_tpm_atlas = {"Lung": 350, "Skin": 280, "Brain Cortex": 120, "Cardiac Muscle": 40, "Liver": 15}
 else:
     active_gene_name = selected_gene_label.split(" - ")[0]
-    initial_tpm_atlas = POPULAR_GENES[active_gene_name]["tissues"]
+    gene_info = POPULAR_GENES[active_gene_name]
+    ref_transcript = gene_info["refseq_transcript"]
+    ref_hgvs = gene_info["hgvs_default"]
+    ref_aa = gene_info["amino_acid_ref"]
+    initial_tpm_atlas = gene_info["tissues"]
 
-variant_hgvs = st.sidebar.text_input("HGVS Coordinate (NCBI RefSeq)", value="NC_000017.11:g.7674220G>A")
+# Read-only Reference Display in Sidebar
+st.sidebar.markdown("**Reference Transcript Standard (Uneditable):**")
+st.sidebar.code(f"Gene: {active_gene_name}\nTranscript: {ref_transcript}\nHGVS: {ref_hgvs}\nRef AA: {ref_aa}", language="text")
 
 # Predictors
 st.sidebar.subheader("🎛️ Molecular Predictors")
@@ -177,12 +227,15 @@ with st.sidebar.expander("Expand to Adjust TPM Values"):
 
 # --- EXECUTE ENGINE ---
 mapped_gene, aa_edit, am_score, splice_score, s_raw, df_results = run_tmdai_pipeline(
-    variant_hgvs, active_gene_name, am_score_input, splice_score_input, custom_tpm_inputs
+    ref_hgvs, active_gene_name, am_score_input, splice_score_input, custom_tpm_inputs
 )
 
 # --- MAIN DASHBOARD HEADER ---
 st.title("🧬 TMDAI Clinical Diagnostic Dashboard")
 st.markdown("*Tissue-Weighted Pathogenicity Decision Engine*")
+
+# Static Uneditable Reference Banner
+st.info(f"🔒 **Locked NCBI/MANE Reference Baseline:** {active_gene_name} | {ref_transcript} | {ref_hgvs} | Baseline AA: `{ref_aa}`")
 st.divider()
 
 # --- TOP METRIC CARDS ---
@@ -206,18 +259,23 @@ with type_dropdown_col:
 
 main_left, main_right = st.columns([3, 2])
 
+color_discrete_map = {
+    "Pathogenic": active_theme["chart_colors"][0],
+    "VUS (Uncertain)": active_theme["chart_colors"][1],
+    "Benign / Safe": active_theme["chart_colors"][2]
+}
+
 with main_left:
-    # Render selected chart with active palette
     if chart_style == "Bar Chart":
         fig = px.bar(
             df_results,
             x="Tissue",
             y="Risk Index (V_tissue)",
             color="Verdict",
-            color_discrete_map=active_theme,
+            color_discrete_map=color_discrete_map,
             text="Risk Index (V_tissue)",
             range_y=[0, 1.0],
-            template=active_theme["template"]
+            template="plotly_white"
         )
     elif chart_style == "Pie Chart":
         fig = px.pie(
@@ -225,9 +283,9 @@ with main_left:
             names="Tissue",
             values="Risk Index (V_tissue)",
             color="Verdict",
-            color_discrete_map=active_theme,
+            color_discrete_map=color_discrete_map,
             hole=0.4,
-            template=active_theme["template"]
+            template="plotly_white"
         )
     else:  # Line Chart
         fig = px.line(
@@ -236,7 +294,7 @@ with main_left:
             y="Risk Index (V_tissue)",
             markers=True,
             text="Risk Index (V_tissue)",
-            template=active_theme["template"]
+            template="plotly_white"
         )
         fig.update_traces(line_color="#636EFA", line_width=3, marker_size=8)
         fig.update_yaxes(range=[0, 1.0])
@@ -252,6 +310,11 @@ with main_right:
         use_container_width=True
     )
     
-    with st.expander("ℹ️ Formula Breakdown"):
-        st.markdown(r"**Joint Disruption:** $S_{raw} = \max(S_{AM}, \Delta) + 0.5 \cdot (S_{AM} \cdot \Delta)(1 - \max(S_{AM}, \Delta))$")
-        st.markdown(r"**Tissue Risk Index:** $V_{tissue} = S_{raw} \times \frac{E(t)}{E_{max}}$")
+    with st.expander("ℹ️ What is HGVS Reference Notation?"):
+        st.markdown("""
+        **HGVS (Human Genome Variation Society)** is the universal clinical standard for writing genomic coordinates.
+        * Example: `NC_000017.11:g.7674220G>A`
+        * `NC_000017.11`: NCBI RefSeq reference chromosome (Chr 17).
+        * `g.7674220`: Exact base-pair position on GRCh38 human genome build.
+        * `G>A`: DNA nucleotide mutation from Guanine to Adenine.
+        """)
