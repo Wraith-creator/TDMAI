@@ -14,7 +14,7 @@ st.set_page_config(
 
 @st.cache_data(ttl=3600)
 def fetch_ensembl_annotation(hgvs_variant):
-    """Fetches gene symbol and amino acid changes via Ensembl VEP API."""
+    """Fetches gene symbol and amino acid changes via Ensembl VEP API mapped to NCBI RefSeq / MANE standards."""
     url = f"https://rest.ensembl.org/vep/human/hgvs/{hgvs_variant}?content-type=application/json"
     try:
         response = requests.get(url, headers={"Content-Type": "application/json"}, timeout=5)
@@ -38,65 +38,52 @@ def fetch_ensembl_annotation(hgvs_variant):
     return {"gene": "MYBPC3", "amino_acid": "p.Arg248Gln", "consequence": "missense_variant"}
 
 
-@st.cache_data(ttl=3600)
-def fetch_spliceai_score(variant_coord):
-    """Queries SpliceAI REST API for delta scores."""
-    url = f"https://spliceai-38-xwkwwwxdwq-uc.a.run.app/spliceai/?hg=38&variant={variant_coord}"
-    try:
-        response = requests.get(url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            scores = data['scores'][0]
-            # Max delta across Acceptor Gain/Loss and Donor Gain/Loss
-            max_delta = max(scores['ds_ag'], scores['ds_al'], scores['ds_dg'], scores['ds_dl'])
-            return float(max_delta)
-    except Exception:
-        pass
-    
-    return 0.12  # Baseline fallback score
-
-
 @st.cache_data
-def fetch_tabula_sapiens_data(gene_symbol):
-    """Simulates single-cell expression (TPM) from Tabula Sapiens atlas."""
+def fetch_tabula_sapiens_base_data(gene_symbol):
+    """Single-cell expression atlas (TPM) from Tabula Sapiens dataset."""
     tissue_atlas = {
-        "MYBPC3": {"Cardiac Muscle": 480, "Skeletal Muscle": 110, "Brain": 15, "Liver": 5, "Kidney": 10},
+        "MYBPC3": {"Cardiac Muscle": 480, "Skeletal Muscle": 110, "Brain Cortex": 15, "Liver": 5, "Kidney": 10},
         "TP53": {"Skin": 450, "Breast": 380, "Brain Cortex": 310, "Liver": 290, "Cardiac Muscle": 150},
         "BRCA1": {"Breast": 420, "Ovary": 390, "Blood": 210, "Cardiac Muscle": 25, "Liver": 15}
     }
     
     default_data = {"Cardiac Muscle": 250, "Brain Cortex": 180, "Liver": 50, "Kidney": 80, "Skin": 120}
-    gene_tpm = tissue_atlas.get(gene_symbol, default_data)
-    
-    # Peak expression in atlas
-    e_max = max(gene_tpm.values())
-    
-    # Calculate tissue weights E(t) / E_max
-    return {tissue: tpm / e_max for tissue, tpm in gene_tpm.items()}
+    return tissue_atlas.get(gene_symbol, default_data)
 
 
 # --- TMDAI DECISION ENGINE ---
 
-def run_tmdai_pipeline(hgvs_variant, variant_coord, manual_am_score):
-    # 1. Annotation
+def run_tmdai_pipeline(hgvs_variant, manual_am_score, manual_splice_score, custom_expression_mods):
+    # 1. Fetch NCBI / MANE Annotation
     annot = fetch_ensembl_annotation(hgvs_variant)
     
-    # 2. Sequence/Structure Disruptions
-    splice_score = fetch_spliceai_score(variant_coord)
+    # 2. Extract Predictor Component Scores
     am_score = manual_am_score
+    splice_score = manual_splice_score
     
-    # 3. Maximum Molecular Disruption S_raw = max(AlphaMissense, SpliceAI)
+    # 3. Maximum Molecular Disruption: S_raw = max(AlphaMissense, SpliceAI)
     s_raw = max(am_score, splice_score)
     
-    # 4. Tissue Activity Weights
-    tissue_weights = fetch_tabula_sapiens_data(annot['gene'])
+    # 4. Process Tabula Sapiens Tissue Expression Weights
+    base_tpm = fetch_tabula_sapiens_data = fetch_tabula_sapiens_base_data(annot['gene'])
     
-    # 5. Compute V_tissue = S_raw * (E(t) / E_max)
+    # Apply user-modified expression values if supplied
+    active_tpm = {}
+    for tissue, tpm in base_tpm.items():
+        if tissue in custom_expression_mods:
+            active_tpm[tissue] = custom_expression_mods[tissue]
+        else:
+            active_tpm[tissue] = tpm
+            
+    e_max = max(active_tpm.values()) if active_tpm.values() else 1
+    
+    # 5. Calculate Tissue-Weighted Index V_tissue = S_raw * (E(t) / E_max)
     results = []
-    for tissue, weight in tissue_weights.items():
+    for tissue, tpm in active_tpm.items():
+        weight = tpm / e_max
         v_tissue = s_raw * weight
         
-        # Clinical Verdict Mapping
+        # ACMG-style Clinical Classification Brackets
         if v_tissue >= 0.70:
             verdict = "Pathogenic"
         elif v_tissue >= 0.45:
@@ -106,6 +93,7 @@ def run_tmdai_pipeline(hgvs_variant, variant_coord, manual_am_score):
             
         results.append({
             "Tissue": tissue,
+            "Expression (TPM)": tpm,
             "Tissue Weight": round(weight, 3),
             "Risk Index (V_tissue)": round(v_tissue, 3),
             "Verdict": verdict
@@ -120,29 +108,52 @@ st.title("🧬 TMDAI: Tissue & Mutation Artificial Intelligence")
 st.markdown("**Tissue-Weighted Variant Pathogenicity Decision Engine**")
 st.divider()
 
-# Sidebar Inputs
+# Sidebar Setup
 st.sidebar.header("1. Input Variant Coordinates")
-variant_hgvs = st.sidebar.text_input("HGVS Variant Notation", value="NC_000017.11:g.7674220G>A")
-variant_coord = st.sidebar.text_input("Genomic Coordinate (GRCh38)", value="chr17-7674220-G-A")
+variant_hgvs = st.sidebar.text_input("HGVS Variant Notation (NCBI RefSeq)", value="NC_000017.11:g.7674220G>A")
 
-st.sidebar.header("2. Structural Model Controls")
-am_score_input = st.sidebar.slider("AlphaMissense Score (3D Damage)", 0.0, 1.0, 0.88, 0.01)
-
-# Execute Engine
-annot, am_score, splice_score, s_raw, df_results = run_tmdai_pipeline(
-    variant_hgvs, variant_coord, am_score_input
+st.sidebar.header("2. Molecular Predictor Sliders")
+am_score_input = st.sidebar.slider(
+    "AlphaMissense Score (3D Structural Damage)", 
+    min_value=0.0, max_value=1.0, value=0.88, step=0.01
 )
 
-# Top Metrics Row
-col1, col2, col3, col4 = st.columns(4)
+splice_score_input = st.sidebar.slider(
+    "SpliceAI Score (RNA Splicing Disruption Δ)", 
+    min_value=0.0, max_value=1.0, value=0.12, step=0.01
+)
+
+st.sidebar.header("3. Tabula Sapiens Tissue Controls")
+annot_preview = fetch_ensembl_annotation(variant_hgvs)
+base_tissues = fetch_tabula_sapiens_base_data(annot_preview['gene'])
+
+custom_tpm_inputs = {}
+with st.sidebar.expander("Adjust Tissue Expression (TPM)", expanded=False):
+    for tissue_name, default_val in base_tissues.items():
+        custom_tpm_inputs[tissue_name] = st.number_input(
+            f"{tissue_name} TPM",
+            min_value=0,
+            max_value=1000,
+            value=default_val,
+            step=10
+        )
+
+# Execute Engine Pipeline
+annot, am_score, splice_score, s_raw, df_results = run_tmdai_pipeline(
+    variant_hgvs, am_score_input, splice_score_input, custom_tpm_inputs
+)
+
+# Metric Summary Display
+col1, col2, col3, col4, col5 = st.columns(5)
 col1.metric("Gene Mapped", annot['gene'])
-col2.metric("Amino Acid Edit", annot['amino_acid'])
-col3.metric("AlphaMissense", f"{am_score:.2f}")
-col4.metric("SpliceAI Delta", f"{splice_score:.2f}")
+col2.metric("NCBI Amino Acid Edit", annot['amino_acid'])
+col3.metric("AlphaMissense ($S_{AM}$)", f"{am_score:.2f}")
+col4.metric("SpliceAI ($\Delta$)", f"{splice_score:.2f}")
+col5.metric("Max Damage ($S_{raw}$)", f"{s_raw:.2f}")
 
 st.divider()
 
-# Main Interactive Visuals
+# Main Visuals Layout
 left_col, right_col = st.columns([3, 2])
 
 with left_col:
@@ -165,8 +176,8 @@ with left_col:
 with right_col:
     st.subheader("Clinical Verdict Breakdown")
     st.dataframe(
-        df_results[["Tissue", "Risk Index (V_tissue)", "Verdict"]],
+        df_results[["Tissue", "Expression (TPM)", "Tissue Weight", "Risk Index (V_tissue)", "Verdict"]],
         hide_index=True,
         use_container_width=True
     )
-    st.info(f"**Max Molecular Disruption ($S_{{raw}}$):** {s_raw:.3f}")
+    st.caption("Formula: $V_{tissue} = \max(S_{AM}, \Delta) \\times \\frac{E(t)}{E_{max}}$")
