@@ -7,11 +7,11 @@ import plotly.express as px
 st.set_page_config(
     page_title="TMDAI - Diagnostic Engine",
     page_icon="🧬",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # --- BASELINE TISSUE EXPRESSION ATLAS (Tabula Sapiens TPM) ---
-# Top 5 most clinically significant genes
 POPULAR_GENES = {
     "MYBPC3": {
         "description": "Hypertrophic Cardiomyopathy",
@@ -35,53 +35,71 @@ POPULAR_GENES = {
     }
 }
 
-# Fixed internal coupling factor (gamma) so scores interact without needing a slider
 INTERNAL_COUPLING_FACTOR = 0.50
 
-# --- THRESHOLD HELPER FUNCTIONS ---
+# --- COLOR PALETTES ---
+THEME_PALETTES = {
+    "TMDAI Clinical (Default)": {
+        "Pathogenic": "#EF553B",
+        "VUS (Uncertain)": "#FECB52",
+        "Benign / Safe": "#00CC96",
+        "template": "plotly_white"
+    },
+    "Emerald Bio": {
+        "Pathogenic": "#D62728",
+        "VUS (Uncertain)": "#FF7F0E",
+        "Benign / Safe": "#2CA02C",
+        "template": "ggplot2"
+    },
+    "Cyberpunk Dark": {
+        "Pathogenic": "#FF0055",
+        "VUS (Uncertain)": "#FFE600",
+        "Benign / Safe": "#00FF66",
+        "template": "plotly_dark"
+    },
+    "Monochrome Minimal": {
+        "Pathogenic": "#111111",
+        "VUS (Uncertain)": "#777777",
+        "Benign / Safe": "#CCCCCC",
+        "template": "simple_white"
+    }
+}
+
+# --- THRESHOLD FUNCTIONS ---
 
 def get_alphamissense_verdict(score):
-    """DeepMind AlphaMissense publication cutoffs."""
     if score < 0.34:
-        return "Benign", "#00CC96"
+        return "Benign (<0.34)"
     elif score > 0.564:
-        return "Pathogenic", "#EF553B"
+        return "Pathogenic (>0.564)"
     else:
-        return "Ambiguous / VUS", "#FECB52"
+        return "Ambiguous (0.34-0.564)"
 
 def get_spliceai_verdict(score):
-    """Illumina SpliceAI publication cutoffs."""
     if score < 0.20:
-        return "Low Impact (Benign)", "#00CC96"
+        return "Low Impact (<0.20)"
     elif score >= 0.50:
-        return "High Splicing Disruption", "#EF553B"
+        return "High Impact (≥0.50)"
     else:
-        return "Moderate Impact", "#FECB52"
+        return "Moderate (0.20-0.49)"
 
 # --- BACKEND ANNOTATION ---
 
 @st.cache_data(ttl=3600)
 def fetch_ensembl_annotation(hgvs_variant):
-    """Fetches gene symbol and amino acid changes via Ensembl VEP API."""
     url = f"https://rest.ensembl.org/vep/human/hgvs/{hgvs_variant}?content-type=application/json"
     try:
         response = requests.get(url, headers={"Content-Type": "application/json"}, timeout=5)
         if response.status_code == 200:
             data = response.json()
             consequence = data[0].get('transcript_consequences', [{}])[0]
-            
-            gene = consequence.get('gene_symbol', 'Unknown')
-            amino_acids = consequence.get('amino_acids', 'N/A')
-            consequence_term = consequence.get('consequence_terms', ['Variant'])[0]
-            
             return {
-                "gene": gene,
-                "amino_acid": f"p.{amino_acids}" if amino_acids != 'N/A' else 'Non-coding',
-                "consequence": consequence_term
+                "gene": consequence.get('gene_symbol', 'Unknown'),
+                "amino_acid": f"p.{consequence.get('amino_acids', 'N/A')}",
+                "consequence": consequence.get('consequence_terms', ['Variant'])[0]
             }
     except Exception:
         pass
-    
     return {"gene": "MYBPC3", "amino_acid": "p.Arg248Gln", "consequence": "missense_variant"}
 
 # --- TMDAI DECISION ENGINE ---
@@ -90,12 +108,11 @@ def run_tmdai_pipeline(hgvs_variant, custom_gene_name, s_am, s_splice, custom_tp
     annot = fetch_ensembl_annotation(hgvs_variant)
     active_gene = custom_gene_name if custom_gene_name.strip() else annot['gene']
     
-    # Internal joint interaction formula (Coupled predictors)
+    # Joint coupling logic
     base_max = max(s_am, s_splice)
     interaction_term = INTERNAL_COUPLING_FACTOR * (s_am * s_splice) * (1.0 - base_max)
     s_raw = min(1.0, base_max + interaction_term)
     
-    # Tissue Expression Weights
     e_max = max(custom_tpm_dict.values()) if custom_tpm_dict.values() and max(custom_tpm_dict.values()) > 0 else 1
     
     results = []
@@ -120,50 +137,42 @@ def run_tmdai_pipeline(hgvs_variant, custom_gene_name, s_am, s_splice, custom_tp
         
     return active_gene, annot['amino_acid'], s_am, s_splice, s_raw, pd.DataFrame(results)
 
-# --- USER INTERFACE ---
+# --- SIDEBAR CONTROLS ---
 
-st.title("🧬 TMDAI: Tissue & Mutation Artificial Intelligence")
-st.markdown("*Precision Tissue-Weighted Variant Pathogenicity Engine*")
-st.divider()
+st.sidebar.title("⚙️ Dashboard Controls")
 
-# --- SIDEBAR NAVIGATION ---
-st.sidebar.header("🎯 1. Select Target Gene")
+# Theme Dropdown
+st.sidebar.subheader("🎨 Appearance Settings")
+selected_palette_name = st.sidebar.selectbox("Color Palette Theme", options=list(THEME_PALETTES.keys()))
+active_theme = THEME_PALETTES[selected_palette_name]
 
-# Dropdown for top 5 popular genes + Custom option
-gene_options = [f"{gene} ({info['description']})" for gene, info in POPULAR_GENES.items()] + ["+ Add Custom Gene"]
-selected_gene_label = st.sidebar.selectbox("Choose a Gene", options=gene_options)
+# Gene Selection
+st.sidebar.subheader("🧬 Gene & Variant Selection")
+gene_options = [f"{gene} - {info['description']}" for gene, info in POPULAR_GENES.items()] + ["+ Custom Gene"]
+selected_gene_label = st.sidebar.selectbox("Select Target Gene", options=gene_options)
 
-if selected_gene_label == "+ Add Custom Gene":
-    active_gene_name = st.sidebar.text_input("Enter Gene Symbol", value="EGFR").upper()
+if selected_gene_label == "+ Custom Gene":
+    active_gene_name = st.sidebar.text_input("Custom Gene Symbol", value="EGFR").upper()
     initial_tpm_atlas = {"Lung": 350, "Skin": 280, "Brain Cortex": 120, "Cardiac Muscle": 40, "Liver": 15}
 else:
-    active_gene_name = selected_gene_label.split(" ")[0]
+    active_gene_name = selected_gene_label.split(" - ")[0]
     initial_tpm_atlas = POPULAR_GENES[active_gene_name]["tissues"]
 
-variant_hgvs = st.sidebar.text_input("HGVS Variant Notation", value="NC_000017.11:g.7674220G>A")
+variant_hgvs = st.sidebar.text_input("HGVS Coordinate (NCBI RefSeq)", value="NC_000017.11:g.7674220G>A")
 
-st.sidebar.header("📊 2. Predictor Inputs")
+# Predictors
+st.sidebar.subheader("🎛️ Molecular Predictors")
+am_score_input = st.sidebar.slider("AlphaMissense Score (3D Damage)", 0.0, 1.0, 0.41, 0.01)
+splice_score_input = st.sidebar.slider("SpliceAI Score (RNA Splicing Δ)", 0.0, 1.0, 0.25, 0.01)
 
-am_score_input = st.sidebar.slider(
-    "AlphaMissense Score (3D Damage)", 
-    min_value=0.0, max_value=1.0, value=0.41, step=0.01
-)
-
-splice_score_input = st.sidebar.slider(
-    "SpliceAI Score (RNA Splicing Δ)", 
-    min_value=0.0, max_value=1.0, value=0.25, step=0.01
-)
-
-st.sidebar.header("🧫 3. Expression Adjustments")
+# Expression Adjustments
+st.sidebar.subheader("🧫 Tissue Expression (TPM)")
 custom_tpm_inputs = {}
-with st.sidebar.expander("Adjust Tissue TPM Values", expanded=False):
+with st.sidebar.expander("Expand to Adjust TPM Values"):
     for tissue_name, default_val in initial_tpm_atlas.items():
         custom_tpm_inputs[tissue_name] = st.number_input(
-            f"{tissue_name} (TPM)",
-            min_value=0,
-            max_value=1000,
-            value=default_val,
-            step=10
+            f"{tissue_name}",
+            min_value=0, max_value=1000, value=default_val, step=10
         )
 
 # --- EXECUTE ENGINE ---
@@ -171,57 +180,54 @@ mapped_gene, aa_edit, am_score, splice_score, s_raw, df_results = run_tmdai_pipe
     variant_hgvs, active_gene_name, am_score_input, splice_score_input, custom_tpm_inputs
 )
 
-am_verdict_str, _ = get_alphamissense_verdict(am_score)
-splice_verdict_str, _ = get_spliceai_verdict(splice_score)
+# --- MAIN DASHBOARD HEADER ---
+st.title("🧬 TMDAI Clinical Diagnostic Dashboard")
+st.markdown("*Tissue-Weighted Pathogenicity Decision Engine*")
+st.divider()
 
-# --- METRIC CARDS ---
-col1, col2, col3, col4, col5 = st.columns(5)
-col1.metric("Active Gene", mapped_gene)
-col2.metric("Amino Acid Edit", aa_edit)
-col3.metric("AlphaMissense", f"{am_score:.2f}", delta=am_verdict_str, delta_color="off")
-col4.metric("SpliceAI", f"{splice_score:.2f}", delta=splice_verdict_str, delta_color="off")
-col5.metric("Joint Score ($S_{raw}$)", f"{s_raw:.3f}")
+# --- TOP METRIC CARDS ---
+kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5 = st.columns(5)
+kpi_col1.metric("Selected Gene", mapped_gene)
+kpi_col2.metric("Amino Acid Change", aa_edit)
+kpi_col3.metric("AlphaMissense", f"{am_score:.2f}", delta=get_alphamissense_verdict(am_score), delta_color="off")
+kpi_col4.metric("SpliceAI Score", f"{splice_score:.2f}", delta=get_spliceai_verdict(splice_score), delta_color="off")
+kpi_col5.metric("Combined Damage ($S_{raw}$)", f"{s_raw:.3f}")
 
 st.divider()
 
-# --- MAIN VISUALIZATION AREA ---
-left_col, right_col = st.columns([3, 2])
+# --- INTERACTIVE VISUALIZATION AREA ---
+chart_header_col, type_dropdown_col = st.columns([3, 1])
 
-with left_col:
-    # Display header and chart style selector inline
-    chart_col1, chart_col2 = st.columns([2, 1])
-    with chart_col1:
-        st.subheader("Tissue-Weighted Risk Profile")
-    with chart_col2:
-        chart_type = st.selectbox("Chart Type", options=["Bar Chart", "Pie Chart", "Line Chart"])
+with chart_header_col:
+    st.subheader("📊 Tissue Risk Index Profile ($V_{tissue}$)")
 
-    color_map = {
-        "Pathogenic": "#EF553B",
-        "VUS (Uncertain)": "#FECB52",
-        "Benign / Safe": "#00CC96"
-    }
+with type_dropdown_col:
+    chart_style = st.selectbox("Chart Type", options=["Bar Chart", "Pie Chart", "Line Chart"])
 
-    # Render dynamic chart based on selection
-    if chart_type == "Bar Chart":
+main_left, main_right = st.columns([3, 2])
+
+with main_left:
+    # Render selected chart with active palette
+    if chart_style == "Bar Chart":
         fig = px.bar(
             df_results,
             x="Tissue",
             y="Risk Index (V_tissue)",
             color="Verdict",
-            color_discrete_map=color_map,
+            color_discrete_map=active_theme,
             text="Risk Index (V_tissue)",
             range_y=[0, 1.0],
-            template="plotly_white"
+            template=active_theme["template"]
         )
-    elif chart_type == "Pie Chart":
+    elif chart_style == "Pie Chart":
         fig = px.pie(
             df_results,
             names="Tissue",
             values="Risk Index (V_tissue)",
             color="Verdict",
-            color_discrete_map=color_map,
+            color_discrete_map=active_theme,
             hole=0.4,
-            template="plotly_white"
+            template=active_theme["template"]
         )
     else:  # Line Chart
         fig = px.line(
@@ -230,21 +236,22 @@ with left_col:
             y="Risk Index (V_tissue)",
             markers=True,
             text="Risk Index (V_tissue)",
-            template="plotly_white"
+            template=active_theme["template"]
         )
         fig.update_traces(line_color="#636EFA", line_width=3, marker_size=8)
         fig.update_yaxes(range=[0, 1.0])
 
-    fig.update_layout(margin=dict(l=20, r=20, t=30, b=20))
+    fig.update_layout(margin=dict(l=10, r=10, t=20, b=10))
     st.plotly_chart(fig, use_container_width=True)
 
-with right_col:
-    st.subheader("Clinical Data Breakdown")
+with main_right:
+    st.subheader("📋 Clinical Classification Data")
     st.dataframe(
         df_results[["Tissue", "Expression (TPM)", "Tissue Weight", "Risk Index (V_tissue)", "Verdict"]],
         hide_index=True,
         use_container_width=True
     )
-    st.caption("AlphaMissense Limits: <0.34 (Benign) | >0.564 (Pathogenic)")
-    st.caption("SpliceAI Limits: <0.20 (Benign) | ≥0.50 (Pathogenic)")
-    st.caption("Formula: $S_{raw} = \max(S_{AM}, \Delta) + 0.5 \cdot (S_{AM} \cdot \Delta)(1 - \max(S_{AM}, \Delta))$")
+    
+    with st.expander("ℹ️ Formula Breakdown"):
+        st.markdown(r"**Joint Disruption:** $S_{raw} = \max(S_{AM}, \Delta) + 0.5 \cdot (S_{AM} \cdot \Delta)(1 - \max(S_{AM}, \Delta))$")
+        st.markdown(r"**Tissue Risk Index:** $V_{tissue} = S_{raw} \times \frac{E(t)}{E_{max}}$")
